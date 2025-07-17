@@ -1,9 +1,14 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { google } = require('googleapis');
 require('dotenv').config();
+const { User } = require('./model');
+const {courseHandler}=require('./coursehandleer')
+const { Dbconnection } = require('./db.connection');
 
 const TOKEN = process.env.TOKEN;
 const SHEET_ID = process.env.SHEET_ID;
+
+
 
 if (!process.env.GOOGLE_CREDENTIALS_BASE64) {
   console.error("❌ Missing GOOGLE_CREDENTIALS_BASE64 env variable");
@@ -11,7 +16,9 @@ if (!process.env.GOOGLE_CREDENTIALS_BASE64) {
 }
 
 const bot = new TelegramBot(TOKEN, { polling: true });
-
+Dbconnection();
+const userStates = new Map();
+const isEnrolled = new Map();
 // ===============================
 // ✅ Get Google Auth Client
 // ===============================
