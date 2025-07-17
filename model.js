@@ -6,6 +6,10 @@ const userSchema=new mongoose.Schema({
     required:true,
     unique:true
   },
+  course:{
+    type:String,
+    required:true
+  },
   sem:{
     type:String,
     required:true
