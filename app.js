@@ -1,8 +1,9 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { google } = require('googleapis');
 require('dotenv').config();
-
-
+const credentials = JSON.parse(
+  Buffer.from(process.env.GOOGLE_CREDENTIALS_BASE64, 'base64').toString()
+);
 const { User } = require('./model');
 const {courseHandler}=require('./coursehandleer')
 const { Dbconnection } = require('./db.connection');
@@ -19,7 +20,7 @@ const isEnrolled = new Map();
 // 🟢 Google Sheets auth
 async function getAuth() {
   return new google.auth.GoogleAuth({
-    keyFile: 'credentials.json',
+    credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
   }).getClient();
 }
