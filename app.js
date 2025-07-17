@@ -39,14 +39,16 @@ async function getFilesBysem(sem, course) {
   const sheets = google.sheets({ version: 'v4', auth: await getAuth() });
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: 'Sheet1!A:C',
+    range: 'Sheet1!A:D',
   });
 
   const rows = res.data.values || [];
+
+ 
+  
   return rows
     .filter((row, i) => i !== 0 && row[3]?.toUpperCase() === sem.toUpperCase() && row[0]?.toUpperCase() === course.toUpperCase())
     .map(row => ({
-      course: row[0],
       courseCode: row[1],
       url: row[2],
     }));
@@ -61,7 +63,7 @@ bot.on('message', async (msg) => {
   if (text === '/start') {
     userStates.set(chatId, 'collecting_info');
     isEnrolled.set(chatId, false);
-    bot.sendMessage(chatId, '👋 Welcome! Which semester are you in? (e.g., sem1, sem2...)\nWhen done, type /done.');
+    bot.sendMessage(chatId, '👋 Welcome! Which semester/Course are you in? (e.g., sem1 BCA, sem2 B.TECH )\nWhen done, type /done.');
     return;
   }
 
@@ -105,6 +107,8 @@ bot.on('message', async (msg) => {
     }
 
     const files = await getFilesBysem(user.sem, user.course);
+    console.log(files);
+    
 
     if (files?.length > 0) {
       let map = new Map();
@@ -133,8 +137,9 @@ bot.on('message', async (msg) => {
 
   // Handle requests for files by semester
   if (isEnrolled.get(chatId)) {
-    const sem = text.toUpperCase();
-    const files = await getFilesBysem(sem);
+     const sem = ['SEM1', 'SEM2', 'SEM3', 'SEM4', 'SEM5', 'SEM6', 'SEM7', 'SEM8'].includes(result[0].toUpperCase()) ? result[0].toUpperCase() : null;
+    const course = ['B.TECH', 'BCA'].includes(result[1].toUpperCase()) ? result[1].toUpperCase() : null;
+    const files = await getFilesBysem(sem,course);
 
     if (files?.length > 0) {
       let map = new Map();
@@ -153,6 +158,7 @@ bot.on('message', async (msg) => {
       });
 
       const parts = [...map].map(([k, v], i) => `${i + 1}. *${k}*:\n ➡️ ${v.join('\n \n ➡️ ')}\n`);
+
 
       bot.sendMessage(chatId, `${reply}\n${parts.join('\n')}`, { parse_mode: 'Markdown' });
     } else {
