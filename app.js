@@ -147,18 +147,56 @@ bot.sendMessage(
   }
 
 
-  if (isEnrolled.get(chatId)) {
+  // if (isEnrolled.get(chatId)) {
+  //   const sem = text.toUpperCase();
+  //   const files = await getFilesBysem(sem);
+
+  //   if (files.length) {
+  //     let resp = `✅ Papers for ${sem}:\n`;
+  //    files.forEach(f => {
+  //       const cleanCourse = escapeMarkdown(f.courseCode);
+  //       const cleanUrl = escapeMarkdown(f.url);
+  //       resp += `• ${cleanCourse} – ${cleanUrl}\n`;
+  //     });
+  //      bot.sendMessage(chatId, resp, { parse_mode: 'Markdown' });
+  //   } else {
+  //     bot.sendMessage(chatId, `❌ No papers found for ${sem}.`);
+  //   }
+  // } else {
+  //   bot.sendMessage(chatId, 'ℹ️ Please send /start to register your semester first.');
+  // }
+
+
+    if (isEnrolled.get(chatId)) {
     const sem = text.toUpperCase();
     const files = await getFilesBysem(sem);
 
-    if (files.length) {
-      let resp = `✅ Papers for ${sem}:\n`;
-     files.forEach(f => {
+    if (files?.length > 0) {
+      let map = new Map()
+      let reply = `📚 Your question papers for *${sem}*\n`;
+
+      files.forEach(f => {
         const cleanCourse = escapeMarkdown(f.courseCode);
         const cleanUrl = escapeMarkdown(f.url);
-        resp += `• ${cleanCourse} – ${cleanUrl}\n`;
+
+        if (map.has(cleanCourse)) {
+          let prev = map.get(cleanCourse)
+          map.set(cleanCourse, [...prev, cleanUrl])
+        }
+        else map.set(cleanCourse, [cleanUrl])
       });
-       bot.sendMessage(chatId, resp, { parse_mode: 'Markdown' });
+      const parts = [...map].map(
+        ([k, v], i) => `${i + 1}. *${k}*:\n ➡️ ${v.join('\n \n ➡️ ')}\n`
+      );
+
+      console.log(parts);
+
+      bot.sendMessage(
+        chatId,
+        `${reply}\n${parts.join('\n')}`,
+        { parse_mode: 'Markdown' }
+      );
+
     } else {
       bot.sendMessage(chatId, `❌ No papers found for ${sem}.`);
     }
