@@ -2,12 +2,12 @@ const TelegramBot = require('node-telegram-bot-api');
 const { google } = require('googleapis');
 require('dotenv').config();
 
+
 const { User } = require('./model');
 const {courseHandler}=require('./coursehandleer')
 const { Dbconnection } = require('./db.connection');
 
 const TOKEN = process.env.TOKEN;
-const 
 SHEET_ID = process.env.SHEET_ID;
 
 const bot = new TelegramBot(TOKEN, { polling: true });
@@ -152,4 +152,4 @@ bot.sendMessage(
   } else {
     bot.sendMessage(chatId, 'ℹ️ Please send /start to register your semester first.');
   }
-});  
+}); 
