@@ -59,7 +59,7 @@ bot.on('message', async (msg) => {
   const text = msg.text.trim();
   let result = text.split(' ');
   const sem = ['SEM1', 'SEM2', 'SEM3', 'SEM4', 'SEM5', 'SEM6', 'SEM7', 'SEM8'].includes(result[0]?.toUpperCase()) ? result[0]?.toUpperCase() : null;
-  const course = ['B.TECH', 'BCA'].includes(result[1]?.toUpperCase()) ? result[1]?.toUpperCase() : null;
+  const course = ['B.TECH', 'BCA', 'M.TECH'].includes(result[1]?.toUpperCase()) ? result[1]?.toUpperCase() : null;
 
   console.log(sem,course);
   
