@@ -91,7 +91,7 @@ bot.on('message', async (msg) => {
 await bot.sendDocument(process.env.ADMIN_CHAT_ID, fileId, {
   caption: `User ${chatId} uploaded a file: "${fileName}".\n\nReply with:\n/approve_${chatId} to approve\n/reject_${chatId} to reject \n Course ${opted.optedCourse} \n SEMESTER:${opted.optedsem}`,
 });
-
+  return
         }
       } catch (error) {
         console.error('error while uploading file', error)
@@ -210,6 +210,7 @@ let result = text?.split(' ');
       if (semesters.includes(Optedsem)) {
         opted.get(chatId).set("optedsem",Optedsem)
         opted.get(chatId).set('folderId' , semMap[Optedsem]);
+      await  bot.sendMessage(chatId,'Send the File(pdf) with CourseCode.pdf eg, CS301.pdf or PY101.pdf ');
         isUploading.set(chatId,false)
         return;
       }
