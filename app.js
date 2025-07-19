@@ -329,5 +329,3 @@ let result = text?.split(' ');
   }
   
 });
-
-
