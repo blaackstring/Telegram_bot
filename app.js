@@ -1,6 +1,5 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { google } = require('googleapis');
-
 require('dotenv').config();
 const { User } = require('./model');
 const { courseHandler } = require('./coursehandleer');
@@ -11,27 +10,19 @@ const { uploadToGoogleDrive } = require('./uploadFile');
 const TOKEN = process.env.TOKEN;
 const SHEET_ID = process.env.SHEET_ID;
 
-if (!process.env.GOOGLE_CREDENTIALS_BASE64) {
-  console.error("❌ Missing GOOGLE_CREDENTIALS_BASE64 env variable");
-  process.exit(1);
-}
-
 const bot = new TelegramBot(TOKEN, { polling: true });
 Dbconnection();
+
 const userStates = new Map();
 const isEnrolled = new Map();
 const isUploading = new Map();
-const inDocumentUploadPhase=new Map()
-const opted = new Map()
+const opted = new Map();
+const pendingUploads = {};
 
-const pendingUploads = {}; // key: chatId, value: file info
-
-// ✅ Get Google Auth Client
 async function getAuth() {
   const credentials = JSON.parse(
     Buffer.from(process.env.GOOGLE_CREDENTIALS_BASE64, 'base64').toString('utf-8')
   );
-
   return new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
@@ -42,189 +33,117 @@ function escapeMarkdown(text) {
   return text.replace(/_/g, '\\_');
 }
 
-// 🧠 Optional: Filter by Course_Code
 async function getFilesBysem(sem, course) {
   const sheets = google.sheets({ version: 'v4', auth: await getAuth() });
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: 'Sheet1!A:D',
   });
-
   const rows = res.data.values || [];
-  console.log(course, sem);
-
-
   return rows
     .filter((row, i) => i !== 0 && row[3]?.toUpperCase() === sem.toUpperCase() && row[0]?.toUpperCase() === course.toUpperCase())
-    .map(row => ({
-      courseCode: row[1],
-      url: row[2],
-    }));
+    .map(row => ({ courseCode: row[1], url: row[2] }));
 }
 
-bot.on('message', async (msg) => {
+// ✅✅ ✅ Document Handler - OUTSIDE
+bot.on('document', async (msg) => {
   const chatId = msg.chat.id;
-  
-  let text = '';
-  if (msg?.text) text = msg.text.trim();
-  else if (msg.document) {
-    bot.on('document', async (msg) => {
+  const fileId = msg.document.file_id;
+  const fileName = msg.document.file_name;
 
-      const chatId = msg.chat.id;
-            inDocumentUploadPhase.set(chatId,true)
-      const fileId = msg.document.file_id;
-      const fileName= msg.document.file_name
-      console.log(chatId,process.env.ADMIN_CHAT_ID)
-      try {
-        if (opted.get(chatId).get('folderId') !== null && opted.get(chatId).get('folderId') !== undefined && opted.get(chatId).get('folderId') != '') {
-          const fileLink = await bot.getFileLink(fileId);
-          const response = await fetch(fileLink);
-
-          if (!response.ok) {
-            throw new Error(`Failed to download file: ${response.statusText}`);
-          }
-
-  pendingUploads[chatId] = { folderId:opted.folderId, fileName: msg.document.file_name,fileId};
-  
-  await bot.sendMessage(chatId, "✅ Your file has been received and is pending admin approval.");
-
-await bot.sendDocument(process.env.ADMIN_CHAT_ID, fileId, {
-  caption: `User ${chatId} uploaded a file: "${fileName}".\n\nReply with:\n/approve_${chatId} to approve\n/reject_${chatId} to reject \n Course ${opted.optedCourse} \n SEMESTER:${opted.optedsem}`,
-});
-  return
-        }
-      } catch (error) {
-        console.error('error while uploading file', error)
-        return bot.sendMessage(chatId, "❌File uploaded Failed");
-      }
-     bot.sendMessage(chatId, "Select Course/Semester Correctly");
-       return;
-    });
+  if (!opted.has(chatId) || !opted.get(chatId).get('folderId')) {
+    return bot.sendMessage(chatId, '⚠️ Please select Course & Semester first using /upload.');
   }
 
+  pendingUploads[chatId] = {
+    folderId: opted.get(chatId).get('folderId'),
+    fileName: fileName,
+    fileId: fileId,
+  };
 
-  console.log(chatId,process.env.ADMIN_CHAT_ID);
-  
-  if(chatId==process.env.ADMIN_CHAT_ID){
-   const text=msg.text.trim();
-   console.log(text)
-if (text.startsWith('/approve_')) {
-    const chatId = text.split('_')[1];
-    const upload = pendingUploads[chatId];
+  await bot.sendMessage(chatId, "✅ File received. Pending admin approval.");
 
-    if (!upload) {
-      return bot.sendMessage(process.env.ADMIN_CHAT_ID, `No pending upload found for user ${chatId}`);
-    }
+  await bot.sendDocument(process.env.ADMIN_CHAT_ID, fileId, {
+    caption: `User ${chatId} uploaded: "${fileName}".\n/approve_${chatId} or /reject_${chatId}\nCourse: ${opted.get(chatId).get('optedCourse')}\nSemester: ${opted.get(chatId).get('optedsem')}`
+  });
+});
 
-    // Get file info
-    const { folderId, fileName,fileId } = upload;
+// ✅✅ ✅ Message Handler
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg?.text?.trim();
 
-    try {
-      // Get file link
+  const user = await User.findOne({ userid: chatId });
+  const count = await User.countDocuments();
+
+  if (chatId == process.env.ADMIN_CHAT_ID && text) {
+    if (text.startsWith('/approve_')) {
+      const targetChatId = text.split('_')[1];
+      const upload = pendingUploads[targetChatId];
+      if (!upload) return bot.sendMessage(chatId, `❌ No pending upload found for ${targetChatId}`);
+
+      const { folderId, fileName, fileId } = upload;
       const fileLink = await bot.getFileLink(fileId);
-
-      // Download file buffer
       const response = await fetch(fileLink);
       const fileBuffer = await response.arrayBuffer();
 
-      // Upload to Google Drive (replace opted.folderId with your desired folderId or mapping)
-      await uploadToGoogleDrive({
-        folderId:folderId , // or some fixed folder for all approved uploads
-        fileName:fileName,
-        fileBuffer:fileBuffer,
-      });
+      try {
+        await uploadToGoogleDrive({ folderId, fileName, fileBuffer });
+        await bot.sendMessage(chatId, `✅ Approved & uploaded for ${targetChatId}.`);
+        await bot.sendMessage(targetChatId, `✅ Your file "${fileName}" was approved & uploaded!`);
+      } catch (err) {
+        console.error(err);
+        await bot.sendMessage(chatId, `❌ Upload failed.`);
+      }
 
-      // Notify admin and user
-      await bot.sendMessage(chatId, `✅ Approved and uploaded "${fileName}" for user ${chatId}.`);
-      await bot.sendMessage(chatId, `✅ Your file "${fileName}" was approved and uploaded successfully!`);
-
-      // Remove from pending
-     return delete pendingUploads[chatId];
-
-    } catch (error) {
-      console.error('Upload error:', error);
-      await bot.sendMessage(chatId, `❌ Failed to upload file: ${error.message}`);
+      delete pendingUploads[targetChatId];
+      return;
     }
 
-  } else if (text.startsWith('/reject_')) {
-    const chatId = text.split('_')[1];
-    const upload = pendingUploads[chatId];
-
-    if (!upload) {
-      return bot.sendMessage(chatId, `No pending upload found for user ${chatId}`);
+    if (text.startsWith('/reject_')) {
+      const targetChatId = text.split('_')[1];
+      delete pendingUploads[targetChatId];
+      await bot.sendMessage(chatId, `❌ Rejected file for ${targetChatId}.`);
+      await bot.sendMessage(targetChatId, `❌ Your file upload was rejected by admin.`);
+      return;
     }
-
-    // Notify user
-    await bot.sendMessage(chatId, `❌ Your file upload was rejected by admin.`);
-
-    // Notify admin
-    await bot.sendMessage(chatId, `❌ Rejected file upload for user ${chatId}.`);
-
-    // Remove from pending
-  return  delete pendingUploads[chatId];
   }
-
-
-
-  }
-
-
-let result = text?.split(' ');
-  const sem = ['SEM1', 'SEM2', 'SEM3', 'SEM4', 'SEM5', 'SEM6', 'SEM7', 'SEM8'].includes(result[0]?.toUpperCase()) ? result[0]?.toUpperCase() : null;
-  const course = ['B.TECH', 'BCA', 'M.TECH'].includes(result[1]?.toUpperCase()) ? result[1]?.toUpperCase() : null;
-
-  const user = await User.findOne({ userid: chatId });
-  const count = await User.countDocuments()
-
 
   if (text === '/upload') {
-    isUploading.set(chatId, 'collecting_info');
-
-    bot.sendMessage(chatId, `👤 Select Course you want  to Upload`);
-    bot.sendMessage(chatId, `${Courses.map((v) => `/${v}`).join('\n')}`)
+    isUploading.set(chatId, true);
+    bot.sendMessage(chatId, '👤 Select Course to upload:');
+    bot.sendMessage(chatId, Courses.map(v => `/${v}`).join('\n'));
     return;
-
   }
 
-  if (isUploading.get(chatId) === 'collecting_info') {
+  if (isUploading.get(chatId)) {
     const OptedCourse = Courses.includes(text.slice(1)) && text.slice(1);
-    const Optedsem = text.slice(1);
-    if (Courses.includes(OptedCourse)) {
-      if (folderMap.hasOwnProperty(OptedCourse)) {
+    if (OptedCourse) {
       opted.set(chatId, new Map());
-      opted.get(chatId).set("optedCourse", OptedCourse);
-        const semMap = folderMap[opted.get(chatId).get('optedCourse')]; // This gives you the object of semesters
-        const semesters = Object.keys(semMap);
-        const folderIds = Object.values(semMap); // ["16YiV...", "1hEu...", ..., "1d76..."]
-        bot.sendMessage(chatId, `👤 Select Semester you want  to Upload`);
-        bot.sendMessage(chatId, `${semesters.map((v) => `/${v}`).join('\n')}`)
-        return;
-      }
+      opted.get(chatId).set('optedCourse', OptedCourse);
+
+      const semMap = folderMap[OptedCourse];
+      const semesters = Object.keys(semMap);
+      bot.sendMessage(chatId, '👤 Select Semester:');
+      bot.sendMessage(chatId, semesters.map(v => `/${v}`).join('\n'));
+      return;
     }
 
-    if (opted.get(chatId).get('optedCourse') && folderMap[opted.get(chatId).get('optedCourse')]) {
-
-      const semMap = folderMap[opted.get(chatId).get('optedCourse')];
-      const semesters = Object.keys(semMap) // ["SEM1", "SEM2", ..., "SEM8"]
-
-      if (semesters.includes(Optedsem)) {
-        opted.get(chatId).set("optedsem",Optedsem)
-        opted.get(chatId).set('folderId' , semMap[Optedsem]);
-      await  bot.sendMessage(chatId,'Send the File(pdf) with CourseCode.pdf eg, CS301.pdf or PY101.pdf ');
-        isUploading.set(chatId,false)
-        return;
-      }
+    const selectedCourse = opted.get(chatId)?.get('optedCourse');
+    if (selectedCourse && folderMap[selectedCourse][text.slice(1)]) {
+      opted.get(chatId).set('optedsem', text.slice(1));
+      opted.get(chatId).set('folderId', folderMap[selectedCourse][text.slice(1)]);
+      bot.sendMessage(chatId, '📄 Now send the file (PDF) Format(CS201.pdf,PY101.pdf ...etc) .');
+      isUploading.set(chatId, false);
+      return;
     }
-
-
   }
-
 
   if (text === '/start') {
     userStates.set(chatId, 'collecting_info');
     isEnrolled.set(chatId, false);
     bot.sendMessage(chatId, `👤 used by ${count} users`);
-    bot.sendMessage(chatId, '👋 Welcome! Which semester/Course are you in? (e.g., sem1 BCA, sem2 B.TECH, sem1 M.TECH )\nWhen done, type /done.');
+    bot.sendMessage(chatId, '👋 Welcome! Enter semester & course (e.g., sem1 B.TECH)');
     return;
   }
 
@@ -232,100 +151,43 @@ let result = text?.split(' ');
     if (userStates.get(chatId) === 'collecting_info') {
       userStates.delete(chatId);
       isEnrolled.set(chatId, true);
-
-      const user = await User.findOne({ userid: chatId });
-
       bot.sendMessage(chatId, user.sem
-        ? `✅ Saved! Your semester: ${user.sem}\nUse /mypyqs to get papers.`
+        ? `✅ Saved! Semester: ${user.sem}\nUse /mypyqs to get papers.`
         : '⚠️ No semester saved. Send /start to try again.');
-    } else {
-      bot.sendMessage(chatId, '⚠️ You are not currently adding a semester. Send /start to begin.');
-    }
-    return;
-  }
-
-
-  if (userStates.get(chatId) === 'collecting_info') {
-
-    if (sem && course) {
-      await courseHandler(chatId, sem, course);
-      bot.sendMessage(chatId, `➕ Added semester: ${sem}\nSend /done when finished.`);
-    } else {
-      bot.sendMessage(chatId, '⚠️ Invalid semester or course. Please enter a valid semester (e.g., SEM1) and course (e.g., B.TECH).');
-    }
-    return;
-  }
-
-
-  if (text === '/mypyqs') {
-
-    if (!user || !user.sem) {
-      bot.sendMessage(chatId, '⚠️ No semester found. Use /start to set your semester.');
       return;
     }
+  }
 
-    const files = await getFilesBysem(user.sem, user.course);
-    console.log(files);
-
-
-    if (files?.length > 0) {
-      let map = new Map();
-      let reply = `📚 Your question papers for *${user.sem}*\n`;
-
-      files.forEach(f => {
-        const cleanCourse = escapeMarkdown(f.courseCode);
-        const cleanUrl = escapeMarkdown(f.url);
-
-        if (map.has(cleanCourse)) {
-          let prev = map.get(cleanCourse);
-          map.set(cleanCourse, [...prev, cleanUrl]);
-        } else {
-          map.set(cleanCourse, [cleanUrl]);
-        }
-      });
-      bot.sendMessage(chatId, `📚 Your question papers for *${user.sem}*\n`),
-
-        // const parts = [...map].map(([k, v], i) => `${i + 1}. *${k}*:\n ➡️ ${v.join('\n \n ➡️ ')}\n`);
-
-        // bot.sendMessage(chatId, `${reply}\n${parts.join('\n')}`, { parse_mode: 'Markdown' });
-
-        [...map].map(([k, v], i) => `${bot.sendMessage(chatId, ` *${k}*:\n ➡️ ${v.join('\n \n ➡️ ')}`, { parse_mode: 'Markdown' })}\n`);
-
-
+  if (userStates.get(chatId) === 'collecting_info') {
+    const [sem, course] = text.split(' ');
+    if (sem && course) {
+      await courseHandler(chatId, sem.toUpperCase(), course.toUpperCase());
+      bot.sendMessage(chatId, `➕ Added semester: ${sem}\nSend /done when finished.`);
     } else {
-      bot.sendMessage(chatId, '😕 No papers found for your semester yet.');
+      bot.sendMessage(chatId, '⚠️ Invalid format. Example: SEM1 B.TECH');
     }
     return;
   }
 
-
-  if ((sem || user.sem) && (course || user.course)&&!inDocumentUploadPhase) {
-
-
-    console.log('aa gya hu idar ')
-    const files = await getFilesBysem(sem || user.sem, course || user.course);
-
-
-    if (files?.length > 0) {
-      let map = new Map();
-
-      files.forEach(f => {
-        const cleanCourse = escapeMarkdown(f.courseCode);
-        const cleanUrl = escapeMarkdown(f.url);
-
-        if (map.has(cleanCourse)) {
-          let prev = map.get(cleanCourse);
-          map.set(cleanCourse, [...prev, cleanUrl]);
-        } else {
-          map.set(cleanCourse, [cleanUrl]);
-        }
-      });
-      const parts = [...map].map(([k, v], i) => `${bot.sendMessage(chatId, ` *${k}*:\n ➡️ ${v.join('\n \n ➡️ ')}`, { parse_mode: 'Markdown' })}\n`);
-    } else {
-      bot.sendMessage(chatId, `❌ No papers found for ${sem}.`);
+  if (text === '/mypyqs') {
+    if (!user || !user.sem) {
+      bot.sendMessage(chatId, '⚠️ No semester found. Use /start.');
+      return;
     }
-  } else {
-    bot.sendMessage(chatId, 'ℹ️ Please send /start to register your semester first.');
+    const files = await getFilesBysem(user.sem, user.course);
+    if (files.length) {
+      const map = new Map();
+      files.forEach(f => {
+        const cc = escapeMarkdown(f.courseCode);
+        const url = escapeMarkdown(f.url);
+        map.set(cc, (map.get(cc) || []).concat(url));
+      });
+      [...map].forEach(([k, v]) => {
+        bot.sendMessage(chatId, `*${k}*\n➡️ ${v.join('\n ➡️ ')}`, { parse_mode: 'Markdown' });
+      });
+    } else {
+      bot.sendMessage(chatId, '😕 No papers found.');
+    }
+    return;
   }
-  
 });
